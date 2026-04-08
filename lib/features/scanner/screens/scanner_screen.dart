@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // FEATURE 1: Required for HapticFeedback (Vibration)
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import '../../../main.dart';
 import '../../currency/services/currency_service.dart';
 
-// FEATURE 3: Adding 'WidgetsBindingObserver' lets the app know when it is minimized to save battery
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
 
@@ -22,32 +22,30 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
 
   bool _isProcessing = false;
 
-  // FEATURE 1: Flashlight state tracking
   bool _isFlashOn = false;
+
+  // FEATURE 2: Track if the camera is paused
+  bool _isFrozen = false;
+
+  // FEATURE 1: Track the last found price so it doesn't vibrate continuously on the same number
+  double? _lastVndPrice;
 
   @override
   void initState() {
     super.initState();
-    // FEATURE 3: Start listening to the app lifecycle (open vs minimized)
     WidgetsBinding.instance.addObserver(this);
     _loadRateAndStartCamera();
   }
 
-  // FEATURE 3: Pause the camera if the user switches to another app
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final CameraController? cameraController = _controller;
-
-    if (cameraController == null || !cameraController.value.isInitialized) {
-      return;
-    }
+    if (cameraController == null || !cameraController.value.isInitialized) return;
 
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
-      // App minimized: Stop the camera to save battery
       cameraController.stopImageStream();
       cameraController.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      // App reopened: Turn the camera back on
       _initializeCamera();
     }
   }
@@ -74,25 +72,31 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       setState(() {});
 
       _controller!.startImageStream((CameraImage image) {
-        if (!_isProcessing) {
+        // FEATURE 2: Do not process frames if the screen is frozen!
+        if (!_isProcessing && !_isFrozen) {
           _processCameraImage(image);
         }
       });
-
     }).catchError((e) {
       debugPrint('Camera Init Error: $e');
     });
   }
 
-  // FEATURE 1: The method to turn the flashlight on and off
   void _toggleFlash() {
     if (_controller == null) return;
     setState(() {
       _isFlashOn = !_isFlashOn;
     });
-    _controller!.setFlashMode(
-      _isFlashOn ? FlashMode.torch : FlashMode.off,
-    );
+    _controller!.setFlashMode(_isFlashOn ? FlashMode.torch : FlashMode.off);
+  }
+
+  // FEATURE 2: Method to freeze/unfreeze the screen
+  void _toggleFreeze() {
+    setState(() {
+      _isFrozen = !_isFrozen;
+    });
+    // Give a nice satisfying heavy bump when freezing
+    if (_isFrozen) HapticFeedback.heavyImpact();
   }
 
   Future<void> _processCameraImage(CameraImage image) async {
@@ -104,24 +108,18 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
 
       final recognizedText = await _textRecognizer.processImage(inputImage);
       _extractAndConvertPrice(recognizedText.text);
-
     } catch (e) {
       debugPrint("Error processing image: $e");
     } finally {
       await Future.delayed(const Duration(milliseconds: 500));
-      if (mounted) {
-        _isProcessing = false;
-      }
+      if (mounted) _isProcessing = false;
     }
   }
 
-  // FEATURE 2: Smarter Vietnamese number parsing ("The 'K' Rule")
   void _extractAndConvertPrice(String text) {
     if (_exchangeRate == null || text.isEmpty) return;
 
-    // 1. Look for standard numbers (150,000 or 150.000)
     final standardRegex = RegExp(r'\b\d{1,3}(?:[.,]\d{3})+\b');
-    // 2. Look for the "k" abbreviation (15k, 150K, 50 k)
     final kRegex = RegExp(r'\b(\d{1,3})\s?[kK]\b');
 
     final standardMatch = standardRegex.firstMatch(text);
@@ -138,11 +136,82 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     }
 
     if (vndPrice != null) {
+      // FEATURE 1: Only vibrate if it's a NEW number!
+      if (vndPrice != _lastVndPrice) {
+        _lastVndPrice = vndPrice;
+        HapticFeedback.lightImpact(); // The little vibration bump
+      }
+
       double phpPrice = vndPrice * _exchangeRate!;
       setState(() {
         _displayText = "₱ ${phpPrice.toStringAsFixed(2)}";
       });
     }
+  }
+
+  // FEATURE 3: The Manual Entry Bottom Sheet
+  void _showManualEntrySheet() {
+    final TextEditingController textController = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true, // Allows it to slide up above the keyboard
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom, // Avoids keyboard overlap
+            left: 20, right: 20, top: 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                  "Manual Entry",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: textController,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: "Enter VND (e.g., 150000)",
+                  border: OutlineInputBorder(),
+                  suffixText: "VND",
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                  onPressed: () {
+                    if (textController.text.isNotEmpty && _exchangeRate != null) {
+                      // Try to parse what they typed safely
+                      double? enteredVnd = double.tryParse(textController.text.replaceAll(',', ''));
+                      if (enteredVnd != null) {
+                        double phpPrice = enteredVnd * _exchangeRate!;
+                        setState(() {
+                          _displayText = "₱ ${phpPrice.toStringAsFixed(2)}";
+                          _isFrozen = true; // Auto-freeze so the camera doesn't wipe out their manual entry
+                        });
+                        Navigator.pop(context); // Close the keyboard sheet
+                      }
+                    }
+                  },
+                  child: const Text("Convert", style: TextStyle(color: Colors.white, fontSize: 16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   InputImage? _inputImageFromCameraImage(CameraImage image) {
@@ -174,7 +243,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
 
   @override
   void dispose() {
-    // FEATURE 3: Stop listening to the app lifecycle when screen closes
     WidgetsBinding.instance.removeObserver(this);
     _controller?.stopImageStream();
     _controller?.dispose();
@@ -192,105 +260,151 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     }
 
     return Scaffold(
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          CameraPreview(_controller!),
+      // FEATURE 2: Wrapping the whole screen in a GestureDetector to catch taps
+      body: GestureDetector(
+        onTap: _toggleFreeze,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CameraPreview(_controller!),
 
-          ColorFiltered(
-            colorFilter: ColorFilter.mode(
-              Colors.black.withOpacity(0.5),
-              BlendMode.srcOut,
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.black,
-                    backgroundBlendMode: BlendMode.dstOut,
-                  ),
-                ),
-                Center(
-                  child: Container(
-                    height: 100,
-                    width: 250,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          Center(
-            child: Container(
-              height: 100,
-              width: 250,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.greenAccent, width: 3),
-                borderRadius: BorderRadius.circular(12),
+            ColorFiltered(
+              colorFilter: ColorFilter.mode(
+                Colors.black.withOpacity(0.5),
+                BlendMode.srcOut,
               ),
-            ),
-          ),
-
-          // FEATURE 1: The Flashlight Button UI
-          Positioned(
-            top: 60,
-            right: 20,
-            child: FloatingActionButton(
-              backgroundColor: Colors.white.withOpacity(0.8),
-              onPressed: _toggleFlash,
-              child: Icon(
-                _isFlashOn ? Icons.flash_on : Icons.flash_off,
-                color: Colors.black,
-              ),
-            ),
-          ),
-
-          Positioned(
-            bottom: 50,
-            left: 20,
-            right: 20,
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+              child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  const Text(
-                    "Converted to PHP (₱)",
-                    style: TextStyle(color: Colors.grey, fontSize: 14),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _displayText,
-                    style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87
+                  Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.black,
+                      backgroundBlendMode: BlendMode.dstOut,
                     ),
-                    textAlign: TextAlign.center,
                   ),
-                  if (_exchangeRate == null)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8.0),
-                      child: Text(
-                        "Warning: No exchange rate found. Connect to internet.",
-                        style: TextStyle(color: Colors.red, fontSize: 12),
+                  Center(
+                    child: Container(
+                      height: 100,
+                      width: 250,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    )
+                    ),
+                  ),
                 ],
               ),
             ),
-          ),
-        ],
+
+            Center(
+              child: Container(
+                height: 100,
+                width: 250,
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    // Change border color to red if frozen
+                      color: _isFrozen ? Colors.redAccent : Colors.greenAccent,
+                      width: 3
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+
+            // FEATURE 2 UI: Show a "PAUSED" badge at the top if frozen
+            if (_isFrozen)
+              Positioned(
+                top: 60,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      "PAUSED - TAP TO RESUME",
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ),
+
+            Positioned(
+              top: 60,
+              right: 20,
+              child: FloatingActionButton(
+                backgroundColor: Colors.white.withOpacity(0.8),
+                onPressed: _toggleFlash,
+                child: Icon(
+                  _isFlashOn ? Icons.flash_on : Icons.flash_off,
+                  color: Colors.black,
+                ),
+              ),
+            ),
+
+            Positioned(
+              bottom: 50,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
+                ),
+                child: Row(
+                  children: [
+                    // The Result Text
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "Converted to PHP (₱)",
+                            style: TextStyle(color: Colors.grey, fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _displayText,
+                            style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87
+                            ),
+                          ),
+                          if (_exchangeRate == null)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8.0),
+                              child: Text(
+                                "Warning: Connect to internet for rates.",
+                                style: TextStyle(color: Colors.red, fontSize: 12),
+                              ),
+                            )
+                        ],
+                      ),
+                    ),
+                    // FEATURE 3 UI: The Manual Entry Keyboard Icon
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.keyboard, color: Colors.blueAccent),
+                        onPressed: _showManualEntrySheet,
+                      ),
+                    )
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
