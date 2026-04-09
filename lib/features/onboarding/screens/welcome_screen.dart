@@ -43,8 +43,8 @@ class WelcomeScreen extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(32.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              const Spacer(), // Pushes the main content to the middle
               const Icon(Icons.camera_alt_outlined, size: 100, color: Colors.blueAccent),
               const SizedBox(height: 32),
               const Text(
@@ -71,6 +71,19 @@ class WelcomeScreen extends StatelessWidget {
                   child: const Text("Enable Camera", style: TextStyle(fontSize: 18, color: Colors.white)),
                 ),
               ),
+              const Spacer(), // Pushes the signature to the very bottom
+
+              // --- YOUR PERSONAL SIGNATURE ---
+              const Text(
+                "Made with ❤️ by Hans Baron\nfor the Baron Family",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey,
+                    fontStyle: FontStyle.italic
+                ),
+              ),
+              const SizedBox(height: 16), // A little breathing room at the bottom
             ],
           ),
         ),
