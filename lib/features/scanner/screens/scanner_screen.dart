@@ -25,6 +25,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   final _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
   double? _exchangeRate;
+  DateTime? _lastRateUpdate; // For the Freshness Indicator
   double? _lastVndPrice;
   String _displayText = "Point camera at a price";
 
@@ -32,11 +33,17 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   bool _isFlashOn = false;
   bool _isFrozen = false;
 
+  // FEATURE 1: Pinch-to-Zoom Variables
+  double _minAvailableZoom = 1.0;
+  double _maxAvailableZoom = 1.0;
+  double _currentZoomLevel = 1.0;
+  double _baseZoomLevel = 1.0;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadRateAndStartCamera();
+    _loadRateDataAndCamera();
   }
 
   @override
@@ -51,24 +58,49 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     }
   }
 
-  Future<void> _loadRateAndStartCamera() async {
+  Future<void> _loadRateDataAndCamera() async {
     final rate = await CurrencyService().getOfflineRate();
-    setState(() => _exchangeRate = rate);
+    final date = await CurrencyService().getLastFetchDate();
+    setState(() {
+      _exchangeRate = rate;
+      _lastRateUpdate = date;
+    });
     _initializeCamera();
+  }
+
+  // FEATURE 3: Manual Refresh Method
+  Future<void> _manualRefreshRate() async {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fetching latest rates...")));
+    await CurrencyService().fetchAndSaveRate();
+
+    // Reload UI with new data
+    final rate = await CurrencyService().getOfflineRate();
+    final date = await CurrencyService().getLastFetchDate();
+    if (mounted) {
+      setState(() {
+        _exchangeRate = rate;
+        _lastRateUpdate = date;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Exchange rate updated!")));
+    }
   }
 
   void _initializeCamera() {
     if (cameras.isEmpty) return;
 
     _controller = CameraController(cameras[0], ResolutionPreset.high, enableAudio: false);
-    _controller!.initialize().then((_) {
+    _controller!.initialize().then((_) async {
       if (!mounted) return;
+
+      // Get the camera's zoom limits
+      _maxAvailableZoom = await _controller!.getMaxZoomLevel();
+      _minAvailableZoom = await _controller!.getMinZoomLevel();
+
       setState(() {});
       _controller!.startImageStream((CameraImage image) {
         if (!_isProcessing && !_isFrozen) _processCameraImage(image);
       });
     }).catchError((Object e) {
-      // Fixed: Wrapped in curly braces to satisfy strict linting
       debugPrint('Camera Init Error: $e');
     });
   }
@@ -127,9 +159,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20,
-          ),
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -160,7 +190,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                         Navigator.pop(context);
                       }
                     }
-                    // Fixed: The extra stray curly brace that was here is now gone!
                   },
                   child: const Text("Convert", style: TextStyle(color: Colors.white, fontSize: 16)),
                 ),
@@ -182,12 +211,9 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     if (image.planes.isEmpty) return null;
 
     final WriteBuffer allBytes = WriteBuffer();
-
-    // Fixed: Wrapped the for loop in curly braces
     for (final Plane plane in image.planes) {
       allBytes.putUint8List(plane.bytes);
     }
-
     final bytes = allBytes.done().buffer.asUint8List();
     final imageMetadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
@@ -216,20 +242,27 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     return Scaffold(
       body: GestureDetector(
         onTap: _toggleFreeze,
+        // FEATURE 1: Add Pinch-to-Zoom handling to our main GestureDetector!
+        onScaleStart: (details) {
+          _baseZoomLevel = _currentZoomLevel;
+        },
+        onScaleUpdate: (details) async {
+          if (_controller == null || _isFrozen) return;
+          _currentZoomLevel = (_baseZoomLevel * details.scale).clamp(_minAvailableZoom, _maxAvailableZoom);
+          await _controller!.setZoomLevel(_currentZoomLevel);
+        },
         child: Stack(
           fit: StackFit.expand,
           children: [
             CameraPreview(_controller!),
-
             TargetBox(isFrozen: _isFrozen),
 
-            // History Button (Left Side)
             Positioned(
               top: 60,
               left: 20,
               child: FloatingActionButton(
-                heroTag: "history_btn", // Best practice to prevent UI animation crashes
-                backgroundColor: Colors.white.withValues(alpha: 0.8), // Fixed: Updated to withValues
+                heroTag: "history_btn",
+                backgroundColor: Colors.white.withValues(alpha: 0.8),
                 onPressed: () {
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen()));
                 },
@@ -237,22 +270,24 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
               ),
             ),
 
-            // Flashlight Button (Right Side - Restored!)
             Positioned(
               top: 60,
               right: 20,
               child: FloatingActionButton(
                 heroTag: "flash_btn",
-                backgroundColor: Colors.white.withValues(alpha: 0.8), // Fixed: Updated to withValues
+                backgroundColor: Colors.white.withValues(alpha: 0.8),
                 onPressed: _toggleFlash,
                 child: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.black),
               ),
             ),
 
+            // Pass our new date data and refresh action to the panel
             ResultPanel(
               displayText: _displayText,
               hasExchangeRate: _exchangeRate != null,
+              lastUpdate: _lastRateUpdate,
               onManualEntryTap: _showManualEntrySheet,
+              onRefreshRate: _manualRefreshRate,
             ),
           ],
         ),
