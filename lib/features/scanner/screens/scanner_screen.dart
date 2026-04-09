@@ -242,6 +242,8 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     super.dispose();
   }
 
+// ... [Keep everything above the build method exactly the same!] ...
+
   @override
   Widget build(BuildContext context) {
     if (_controller == null || !_controller!.value.isInitialized) {
@@ -251,7 +253,25 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     return Scaffold(
       body: GestureDetector(
         onTap: _toggleFreeze,
-        // FEATURE 1: Add Pinch-to-Zoom handling to our main GestureDetector!
+
+        // FEATURE 2: Double Tap to Force Focus!
+        onDoubleTap: () async {
+          if (_controller != null && !_isFrozen) {
+            // Force the camera to focus directly in the center of the screen
+            await _controller!.setFocusPoint(const Offset(0.5, 0.5));
+            HapticFeedback.mediumImpact();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Camera focused!"),
+                    duration: Duration(milliseconds: 800),
+                    behavior: SnackBarBehavior.floating,
+                  )
+              );
+            }
+          }
+        },
+
         onScaleStart: (details) {
           _baseZoomLevel = _currentZoomLevel;
         },
@@ -261,6 +281,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
           await _controller!.setZoomLevel(_currentZoomLevel);
         },
         child: Stack(
+// ... [Keep the rest of the Stack exactly the same!] ...
           fit: StackFit.expand,
           children: [
             CameraPreview(_controller!),
