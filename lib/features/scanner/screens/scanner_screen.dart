@@ -25,7 +25,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   final _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
   double? _exchangeRate;
-  DateTime? _lastRateUpdate; // For the Freshness Indicator
+  DateTime? _lastRateUpdate;
   double? _lastVndPrice;
   String _displayText = "Point camera at a price";
 
@@ -33,17 +33,33 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   bool _isFlashOn = false;
   bool _isFrozen = false;
 
-  // FEATURE 1: Pinch-to-Zoom Variables
   double _minAvailableZoom = 1.0;
   double _maxAvailableZoom = 1.0;
   double _currentZoomLevel = 1.0;
   double _baseZoomLevel = 1.0;
+
+  // NEW: State variables to track where the box is on the screen!
+  Offset? _targetPosition;
+  final Size _targetSize = const Size(250, 100);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadRateDataAndCamera();
+  }
+
+  // NEW: Center the box when the screen first loads
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_targetPosition == null) {
+      final size = MediaQuery.of(context).size;
+      _targetPosition = Offset(
+        (size.width - _targetSize.width) / 2,
+        (size.height - _targetSize.height) / 2,
+      );
+    }
   }
 
   @override
@@ -68,12 +84,10 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     _initializeCamera();
   }
 
-  // FEATURE 3: Manual Refresh Method
   Future<void> _manualRefreshRate() async {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fetching latest rates...")));
     await CurrencyService().fetchAndSaveRate();
 
-    // Reload UI with new data
     final rate = await CurrencyService().getOfflineRate();
     final date = await CurrencyService().getLastFetchDate();
     if (mounted) {
@@ -92,7 +106,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     _controller!.initialize().then((_) async {
       if (!mounted) return;
 
-      // Get the camera's zoom limits
       _maxAvailableZoom = await _controller!.getMaxZoomLevel();
       _minAvailableZoom = await _controller!.getMinZoomLevel();
 
@@ -118,12 +131,11 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       if (_lastVndPrice != null && _exchangeRate != null) {
         HistoryService().saveScan(_lastVndPrice!, _lastVndPrice! * _exchangeRate!);
 
-        // FEATURE 3: Show visual confirmation!
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Price saved to History!"),
               duration: Duration(seconds: 1),
-              behavior: SnackBarBehavior.floating, // Makes it pop up nicely above the bottom panel
+              behavior: SnackBarBehavior.floating,
             )
         );
       }
@@ -139,6 +151,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       final recognizedText = await _textRecognizer.processImage(inputImage);
 
       if (_exchangeRate != null) {
+        // Our new parser aggressively finds '50k/bát' and '50000'
         final vndPrice = PriceParser.extractPrice(recognizedText.text);
 
         if (vndPrice != null) {
@@ -242,8 +255,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     super.dispose();
   }
 
-// ... [Keep everything above the build method exactly the same!] ...
-
   @override
   Widget build(BuildContext context) {
     if (_controller == null || !_controller!.value.isInitialized) {
@@ -254,10 +265,8 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       body: GestureDetector(
         onTap: _toggleFreeze,
 
-        // FEATURE 2: Double Tap to Force Focus!
         onDoubleTap: () async {
           if (_controller != null && !_isFrozen) {
-            // Force the camera to focus directly in the center of the screen
             await _controller!.setFocusPoint(const Offset(0.5, 0.5));
             HapticFeedback.mediumImpact();
             if (mounted) {
@@ -281,11 +290,26 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
           await _controller!.setZoomLevel(_currentZoomLevel);
         },
         child: Stack(
-// ... [Keep the rest of the Stack exactly the same!] ...
           fit: StackFit.expand,
           children: [
             CameraPreview(_controller!),
-            TargetBox(isFrozen: _isFrozen),
+
+            // NEW: The target box is now fully movable!
+            TargetBox(
+              isFrozen: _isFrozen,
+              position: _targetPosition ?? const Offset(50, 200),
+              size: _targetSize,
+              onPanUpdate: (details) {
+                if (_isFrozen) return; // Lock the box in place if paused
+                setState(() {
+                  // This complex math ensures you can't drag the box off the screen!
+                  _targetPosition = Offset(
+                    (_targetPosition!.dx + details.delta.dx).clamp(0.0, MediaQuery.of(context).size.width - _targetSize.width),
+                    (_targetPosition!.dy + details.delta.dy).clamp(0.0, MediaQuery.of(context).size.height - _targetSize.height),
+                  );
+                });
+              },
+            ),
 
             Positioned(
               top: 60,
@@ -311,7 +335,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
               ),
             ),
 
-            // Pass our new date data and refresh action to the panel
             ResultPanel(
               displayText: _displayText,
               hasExchangeRate: _exchangeRate != null,

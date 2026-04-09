@@ -2,18 +2,27 @@ import 'package:flutter/material.dart';
 
 class TargetBox extends StatelessWidget {
   final bool isFrozen;
+  final Offset position;
+  final Size size;
+  final Function(DragUpdateDetails) onPanUpdate;
 
-  const TargetBox({super.key, required this.isFrozen});
+  const TargetBox({
+    super.key,
+    required this.isFrozen,
+    required this.position,
+    required this.size,
+    required this.onPanUpdate,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // The Darkened Overlay
+        // The Darkened Overlay with the cutout hole
         ColorFiltered(
           colorFilter: ColorFilter.mode(
-            Colors.black.withOpacity(0.5),
+            Colors.black.withValues(alpha: 0.5),
             BlendMode.srcOut,
           ),
           child: Stack(
@@ -25,10 +34,12 @@ class TargetBox extends StatelessWidget {
                   backgroundBlendMode: BlendMode.dstOut,
                 ),
               ),
-              Center(
+              Positioned(
+                left: position.dx,
+                top: position.dy,
                 child: Container(
-                  height: 100,
-                  width: 250,
+                  height: size.height,
+                  width: size.width,
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
@@ -39,17 +50,23 @@ class TargetBox extends StatelessWidget {
           ),
         ),
 
-        // The Red/Green Border
-        Center(
-          child: Container(
-            height: 100,
-            width: 250,
-            decoration: BoxDecoration(
-              border: Border.all(
-                  color: isFrozen ? Colors.redAccent : Colors.greenAccent,
-                  width: 3
+        // The Movable Border (This is what you grab and drag!)
+        Positioned(
+          left: position.dx,
+          top: position.dy,
+          child: GestureDetector(
+            onPanUpdate: onPanUpdate,
+            child: Container(
+              height: size.height,
+              width: size.width,
+              decoration: BoxDecoration(
+                color: Colors.transparent, // Must be transparent so you can drag the center
+                border: Border.all(
+                    color: isFrozen ? Colors.redAccent : Colors.greenAccent,
+                    width: 3
+                ),
+                borderRadius: BorderRadius.circular(12),
               ),
-              borderRadius: BorderRadius.circular(12),
             ),
           ),
         ),
@@ -57,7 +74,7 @@ class TargetBox extends StatelessWidget {
         // The "PAUSED" Badge
         if (isFrozen)
           Positioned(
-            top: 60,
+            top: position.dy - 50, // Hovers just above the moving box
             left: 0,
             right: 0,
             child: Center(
