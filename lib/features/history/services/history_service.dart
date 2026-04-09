@@ -9,11 +9,7 @@ class HistoryService {
     List<String> historyLogs = prefs.getStringList(_historyKey) ?? [];
 
     final newItem = HistoryItem(vndAmount: vnd, phpAmount: php, timestamp: DateTime.now());
-
-    // Add to the top of the list
     historyLogs.insert(0, newItem.toJson());
-
-    // Keep only the last 50 scans to save space
     if (historyLogs.length > 50) historyLogs = historyLogs.sublist(0, 50);
 
     await prefs.setStringList(_historyKey, historyLogs);
@@ -22,12 +18,22 @@ class HistoryService {
   Future<List<HistoryItem>> getHistory() async {
     final prefs = await SharedPreferences.getInstance();
     List<String> historyLogs = prefs.getStringList(_historyKey) ?? [];
-
     return historyLogs.map((item) => HistoryItem.fromJson(item)).toList();
   }
 
   Future<void> clearHistory() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_historyKey);
+  }
+
+  // FEATURE 2: Add this method to delete a single item
+  Future<void> deleteScan(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> historyLogs = prefs.getStringList(_historyKey) ?? [];
+
+    if (index >= 0 && index < historyLogs.length) {
+      historyLogs.removeAt(index);
+      await prefs.setStringList(_historyKey, historyLogs);
+    }
   }
 }

@@ -117,6 +117,15 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       HapticFeedback.heavyImpact();
       if (_lastVndPrice != null && _exchangeRate != null) {
         HistoryService().saveScan(_lastVndPrice!, _lastVndPrice! * _exchangeRate!);
+
+        // FEATURE 3: Show visual confirmation!
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Price saved to History!"),
+              duration: Duration(seconds: 1),
+              behavior: SnackBarBehavior.floating, // Makes it pop up nicely above the bottom panel
+            )
+        );
       }
     }
   }
