@@ -1,45 +1,46 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-// Make sure to import your new services!
 import 'features/currency/services/currency_service.dart';
 import 'features/scanner/screens/scanner_screen.dart';
+import 'features/onboarding/screens/welcome_screen.dart';
+import 'core/utils/camera_permission_handler.dart';
+
 
 List<CameraDescription> cameras = [];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialize the cameras
-  try {
-    cameras = await availableCameras();
-  } on CameraException catch (e) {
-    debugPrint('Camera error: ${e.code}, ${e.description}');
-  }
-
-  // 2. Manage the Currency Rate in the background
+  // Manage the Currency Rate in the background
   final currencyService = CurrencyService();
-  final needsUpdate = await currencyService.isRateOutdated();
-
-  if (needsUpdate) {
-    debugPrint('Rate is missing or outdated. Fetching a new one...');
+  if (await currencyService.isRateOutdated()) {
     await currencyService.fetchAndSaveRate();
-  } else {
-    debugPrint('Rate is fresh! Ready for offline use.');
   }
 
-  // 3. Run the app
-  runApp(const PriceScannerApp());
+  // Check if we ALREADY have camera permission
+  bool hasPermission = await CameraPermissionHandler.hasPermission();
+  if (hasPermission) {
+    try {
+      cameras = await availableCameras();
+    } catch (e) {
+      debugPrint('Camera error: $e');
+    }
+  }
+
+  runApp(PriceScannerApp(startWithScanner: hasPermission));
 }
 
 class PriceScannerApp extends StatelessWidget {
-  const PriceScannerApp({super.key});
+  final bool startWithScanner;
+  const PriceScannerApp({super.key, required this.startWithScanner});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Currency Converter', // Updated to your new title!
+      title: 'Currency Converter',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const ScannerScreen(), // This tells the app to load your camera screen
+      // If we have permission, go to scanner. Otherwise, go to welcome screen!
+      home: startWithScanner ? const ScannerScreen() : const WelcomeScreen(),
     );
   }
 }
