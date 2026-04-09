@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +29,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   DateTime? _lastRateUpdate;
   double? _lastVndPrice;
   String _displayText = "Point camera at a price";
+  String _debugOcrText = "";
 
   bool _isProcessing = false;
   bool _isFlashOn = false;
@@ -38,7 +40,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   double _currentZoomLevel = 1.0;
   double _baseZoomLevel = 1.0;
 
-  // NEW: State variables to track where the box is on the screen!
   Offset? _targetPosition;
   final Size _targetSize = const Size(250, 100);
 
@@ -49,7 +50,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     _loadRateDataAndCamera();
   }
 
-  // NEW: Center the box when the screen first loads
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -102,7 +102,15 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   void _initializeCamera() {
     if (cameras.isEmpty) return;
 
-    _controller = CameraController(cameras[0], ResolutionPreset.high, enableAudio: false);
+    _controller = CameraController(
+      cameras[0],
+      // UPGRADED FOR MODERN PHONES: Crystal clear 1080p preview.
+      // The frame throttler we added will keep older tablets safe!
+      ResolutionPreset.high,
+      enableAudio: false,
+      imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
+    );
+
     _controller!.initialize().then((_) async {
       if (!mounted) return;
 
@@ -150,9 +158,47 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
 
       final recognizedText = await _textRecognizer.processImage(inputImage);
 
+      String targetText = "";
+
+      // PROXIMITY TRACKER: Only read the text block closest to the target box!
+      if (_targetPosition != null && recognizedText.blocks.isNotEmpty) {
+        double minDistance = double.infinity;
+
+        final screenWidth = MediaQuery.of(context).size.width;
+        final screenHeight = MediaQuery.of(context).size.height;
+
+        final targetBoxCenterX = _targetPosition!.dx + (_targetSize.width / 2);
+        final targetBoxCenterY = _targetPosition!.dy + (_targetSize.height / 2);
+
+        // Android camera images are typically rotated 90 degrees relative to the screen portrait mode
+        final double imgWidth = Platform.isAndroid ? image.height.toDouble() : image.width.toDouble();
+        final double imgHeight = Platform.isAndroid ? image.width.toDouble() : image.height.toDouble();
+
+        for (TextBlock block in recognizedText.blocks) {
+          final rect = block.boundingBox;
+
+          // Map the ML Kit bounding box coordinates to screen coordinates
+          final blockCenterX = (rect.left + rect.width / 2) / imgWidth * screenWidth;
+          final blockCenterY = (rect.top + rect.height / 2) / imgHeight * screenHeight;
+
+          // Pythagorean theorem to find the closest block
+          final distance = ((blockCenterX - targetBoxCenterX) * (blockCenterX - targetBoxCenterX)) +
+              ((blockCenterY - targetBoxCenterY) * (blockCenterY - targetBoxCenterY));
+
+          if (distance < minDistance) {
+            minDistance = distance;
+            targetText = block.text;
+          }
+        }
+      }
+
+      // Fallback
+      if (targetText.isEmpty) targetText = recognizedText.text;
+
+      _debugOcrText = targetText.replaceAll('\n', ' ');
+
       if (_exchangeRate != null) {
-        // Our new parser aggressively finds '50k/bát' and '50000'
-        final vndPrice = PriceParser.extractPrice(recognizedText.text);
+        final vndPrice = PriceParser.extractPrice(targetText);
 
         if (vndPrice != null) {
           if (vndPrice != _lastVndPrice) {
@@ -168,6 +214,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     } catch (e) {
       debugPrint("Error processing image: $e");
     } finally {
+      // Prevents the tablet from choking by only processing ~2 frames a second
       await Future.delayed(const Duration(milliseconds: 500));
       if (mounted) _isProcessing = false;
     }
@@ -228,8 +275,10 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     final camera = cameras[0];
     final rotation = InputImageRotationValue.fromRawValue(camera.sensorOrientation);
     if (rotation == null) return null;
-    final format = InputImageFormatValue.fromRawValue(image.format.raw);
-    if (format == null || (format != InputImageFormat.nv21 && format != InputImageFormat.bgra8888)) return null;
+
+    final format = InputImageFormatValue.fromRawValue(image.format.raw) ?? InputImageFormat.nv21;
+    if (format != InputImageFormat.nv21 && format != InputImageFormat.bgra8888) return null;
+
     if (image.planes.isEmpty) return null;
 
     final WriteBuffer allBytes = WriteBuffer();
@@ -258,7 +307,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     if (_controller == null || !_controller!.value.isInitialized) {
-      return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator(color: Colors.white)));
     }
 
     return Scaffold(
@@ -294,15 +343,13 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
           children: [
             CameraPreview(_controller!),
 
-            // NEW: The target box is now fully movable!
             TargetBox(
               isFrozen: _isFrozen,
               position: _targetPosition ?? const Offset(50, 200),
               size: _targetSize,
               onPanUpdate: (details) {
-                if (_isFrozen) return; // Lock the box in place if paused
+                if (_isFrozen) return;
                 setState(() {
-                  // This complex math ensures you can't drag the box off the screen!
                   _targetPosition = Offset(
                     (_targetPosition!.dx + details.delta.dx).clamp(0.0, MediaQuery.of(context).size.width - _targetSize.width),
                     (_targetPosition!.dy + details.delta.dy).clamp(0.0, MediaQuery.of(context).size.height - _targetSize.height),
@@ -310,6 +357,20 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                 });
               },
             ),
+
+            if (!_isFrozen)
+              Positioned(
+                top: 40,
+                left: 10,
+                right: 10,
+                child: Text(
+                    _debugOcrText, // This will now ONLY show the text closest to the target box!
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.greenAccent, fontSize: 12, backgroundColor: Colors.black54)
+                ),
+              ),
 
             Positioned(
               top: 60,

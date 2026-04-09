@@ -74,7 +74,7 @@ class TargetBox extends StatelessWidget {
         // The "PAUSED" Badge
         if (isFrozen)
           Positioned(
-            top: position.dy - 50, // Hovers just above the moving box
+            top: position.dy - 50,
             left: 0,
             right: 0,
             child: Center(
