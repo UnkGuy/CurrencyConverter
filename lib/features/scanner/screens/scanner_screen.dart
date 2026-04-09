@@ -6,8 +6,9 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 
 import '../../../main.dart';
 import '../../currency/services/currency_service.dart';
+import '../../history/services/history_service.dart';
+import '../../history/screens/history_screen.dart';
 
-// Import your brand new refactored pieces!
 import '../logic/price_parser.dart';
 import '../widgets/target_box.dart';
 import '../widgets/result_panel.dart';
@@ -66,7 +67,10 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       _controller!.startImageStream((CameraImage image) {
         if (!_isProcessing && !_isFrozen) _processCameraImage(image);
       });
-    }).catchError((e) => debugPrint('Camera Init Error: $e'));
+    }).catchError((Object e) {
+      // Fixed: Wrapped in curly braces to satisfy strict linting
+      debugPrint('Camera Init Error: $e');
+    });
   }
 
   void _toggleFlash() {
@@ -77,7 +81,12 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
 
   void _toggleFreeze() {
     setState(() => _isFrozen = !_isFrozen);
-    if (_isFrozen) HapticFeedback.heavyImpact();
+    if (_isFrozen) {
+      HapticFeedback.heavyImpact();
+      if (_lastVndPrice != null && _exchangeRate != null) {
+        HistoryService().saveScan(_lastVndPrice!, _lastVndPrice! * _exchangeRate!);
+      }
+    }
   }
 
   Future<void> _processCameraImage(CameraImage image) async {
@@ -88,7 +97,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
 
       final recognizedText = await _textRecognizer.processImage(inputImage);
 
-      // Look how clean this logic is now!
       if (_exchangeRate != null) {
         final vndPrice = PriceParser.extractPrice(recognizedText.text);
 
@@ -144,6 +152,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                       double? enteredVnd = double.tryParse(textController.text.replaceAll(',', ''));
                       if (enteredVnd != null) {
                         double phpPrice = enteredVnd * _exchangeRate!;
+                        HistoryService().saveScan(enteredVnd, phpPrice);
                         setState(() {
                           _displayText = "₱ ${phpPrice.toStringAsFixed(2)}";
                           _isFrozen = true;
@@ -151,6 +160,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                         Navigator.pop(context);
                       }
                     }
+                    // Fixed: The extra stray curly brace that was here is now gone!
                   },
                   child: const Text("Convert", style: TextStyle(color: Colors.white, fontSize: 16)),
                 ),
@@ -172,7 +182,12 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     if (image.planes.isEmpty) return null;
 
     final WriteBuffer allBytes = WriteBuffer();
-    for (final Plane plane in image.planes) allBytes.putUint8List(plane.bytes);
+
+    // Fixed: Wrapped the for loop in curly braces
+    for (final Plane plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+
     final bytes = allBytes.done().buffer.asUint8List();
     final imageMetadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
@@ -206,20 +221,34 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
           children: [
             CameraPreview(_controller!),
 
-            // Replaced 40 lines of code with one clean widget call
             TargetBox(isFrozen: _isFrozen),
 
+            // History Button (Left Side)
+            Positioned(
+              top: 60,
+              left: 20,
+              child: FloatingActionButton(
+                heroTag: "history_btn", // Best practice to prevent UI animation crashes
+                backgroundColor: Colors.white.withValues(alpha: 0.8), // Fixed: Updated to withValues
+                onPressed: () {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen()));
+                },
+                child: const Icon(Icons.history, color: Colors.black),
+              ),
+            ),
+
+            // Flashlight Button (Right Side - Restored!)
             Positioned(
               top: 60,
               right: 20,
               child: FloatingActionButton(
-                backgroundColor: Colors.white.withOpacity(0.8),
+                heroTag: "flash_btn",
+                backgroundColor: Colors.white.withValues(alpha: 0.8), // Fixed: Updated to withValues
                 onPressed: _toggleFlash,
                 child: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.black),
               ),
             ),
 
-            // Replaced 50 lines of code with one clean widget call
             ResultPanel(
               displayText: _displayText,
               hasExchangeRate: _exchangeRate != null,
