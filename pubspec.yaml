@@ -45,6 +45,7 @@ dependencies:
   # --- The Offline Storage (Caching) ---
   shared_preferences: ^2.2.3 # To save the exchange rate locally for offline use
   flutter_lints: ^5.0.0
+  permission_handler: ^12.0.1
 
 
   # --- The Camera & Vision ---

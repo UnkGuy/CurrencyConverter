@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-// Make sure to import your new service!
+// Make sure to import your new services!
 import 'features/currency/services/currency_service.dart';
 import 'features/scanner/screens/scanner_screen.dart';
 
